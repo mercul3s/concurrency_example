@@ -42,10 +42,12 @@ func NewMutex(s *Session, pfx string) *Mutex {
 // while trying to acquire the lock, the mutex tries to clean its stale lock entry.
 func (m *Mutex) Lock(ctx context.Context) error {
 	s := m.s
+	fmt.Println("Lease ID: %v", s.Lease())
 	client := m.s.Client()
-
 	m.myKey = fmt.Sprintf("%s%x", m.pfx, s.Lease())
+	fmt.Println("Key: %v", m.myKey)
 	cmp := v3.Compare(v3.CreateRevision(m.myKey), "=", 0)
+	fmt.Println("Comparison revision:", cmp)
 	// put self in lock waiters via myKey; oldest waiter holds lock
 	put := v3.OpPut(m.myKey, "", v3.WithLease(s.Lease()))
 	// reuse key in case this session already holds the lock
@@ -53,6 +55,7 @@ func (m *Mutex) Lock(ctx context.Context) error {
 	// fetch current holder to complete uncontended path with only one RPC
 	getOwner := v3.OpGet(m.pfx, v3.WithFirstCreate()...)
 	resp, err := client.Txn(ctx).If(cmp).Then(put, getOwner).Else(get, getOwner).Commit()
+	fmt.Println(resp.Responses)
 	if err != nil {
 		return err
 	}
@@ -62,6 +65,9 @@ func (m *Mutex) Lock(ctx context.Context) error {
 	}
 	// if no key on prefix / the minimum rev is key, already hold the lock
 	ownerKey := resp.Responses[1].GetResponseRange().Kvs
+	fmt.Println("Owner key length: \n", len(ownerKey))
+	fmt.Println("Owner key revision: \n", ownerKey[0].CreateRevision)
+	fmt.Println("My key revision: \n", m.myRev)
 	if len(ownerKey) == 0 || ownerKey[0].CreateRevision == m.myRev {
 		m.hdr = resp.Header
 		return nil

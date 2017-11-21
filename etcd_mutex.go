@@ -3,10 +3,11 @@ package main
 import (
 	"context"
 	"fmt"
+	"log"
 	"time"
 
 	v3 "github.com/coreos/etcd/clientv3"
-	c "github.com/coreos/etcd/clientv3/concurrency"
+	"github.com/coreos/etcd/clientv3/concurrency"
 )
 
 // Only one client session is needed. It should be reused because it has
@@ -20,7 +21,6 @@ const (
 )
 
 func main() {
-	ctx := context.TODO()
 	client, err := v3.New(
 		v3.Config{
 			Endpoints:   []string{"localhost:2379"},
@@ -30,20 +30,42 @@ func main() {
 		fmt.Println("Error establishing client ", err)
 	}
 
-	defer client.Close()
-	session, err := c.NewSession(client)
+	// create two separate sessions for lock competition
+	s1, err := concurrency.NewSession(client)
 	if err != nil {
-		fmt.Println("error creating session ", err)
+		log.Fatal(err)
 	}
+	defer s1.Close()
+	m1 := concurrency.NewMutex(s1, "/my-lock/")
 
-	mutex := c.NewMutex(session, mutexRoot)
-	if err = mutex.Lock(ctx); err != nil {
-		fmt.Println("error locking mutex ", err)
+	s2, err := concurrency.NewSession(client)
+	if err != nil {
+		log.Fatal(err)
 	}
+	defer s2.Close()
+	m2 := concurrency.NewMutex(s2, "/my-lock/")
 
-	fmt.Println("Mutex locked")
-	if err = mutex.Unlock(ctx); err != nil {
-		fmt.Println("error unlocking mutex", err)
+	// acquire lock for s1
+	if err := m1.Lock(context.TODO()); err != nil {
+		log.Fatal(err)
 	}
-	fmt.Println("Mutex unlocked")
+	fmt.Println("acquired lock for s1")
+
+	m2Locked := make(chan struct{})
+	go func() {
+		defer close(m2Locked)
+		// wait until s1 is locks /my-lock/
+		if err := m2.Lock(context.TODO()); err != nil {
+			log.Fatal(err)
+		}
+	}()
+
+	if err := m1.Unlock(context.TODO()); err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println("released lock for s1")
+
+	<-m2Locked
+	fmt.Println("acquired lock for s2")
+
 }
