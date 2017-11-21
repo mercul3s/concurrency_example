@@ -30,6 +30,9 @@ func main() {
 		fmt.Println("Error establishing client ", err)
 	}
 
+	// The following code is referenced in the example section of
+	// https://godoc.org/github.com/coreos/etcd/clientv3/concurrency#Mutex
+
 	// create two separate sessions for lock competition
 	s1, err := concurrency.NewSession(client)
 	if err != nil {
